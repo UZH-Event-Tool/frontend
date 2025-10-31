@@ -1,8 +1,11 @@
-'use client';
+"use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
+import { getAuthToken, clearAuthToken } from "@/lib/auth";
+import { API_BASE_URL } from "@/lib/api";
 
 const navLinks = [
   { href: "/dashboard", label: "Discover Events" },
@@ -12,9 +15,62 @@ const navLinks = [
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [authStatus, setAuthStatus] = useState<"checking" | "authorized">(
+    "checking",
+  );
+
+  useEffect(() => {
+    let isActive = true;
+
+    const verifySession = async () => {
+      const token = getAuthToken();
+
+      if (!token) {
+        router.replace("/login");
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/profile`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error("Session expired");
+        }
+
+        if (!isActive) {
+          return;
+        }
+
+        setAuthStatus("authorized");
+      } catch (error) {
+        console.warn("Auth check failed", error);
+        clearAuthToken();
+        router.replace("/login");
+      }
+    };
+
+    void verifySession();
+
+    return () => {
+      isActive = false;
+    };
+  }, [router]);
+
+  if (authStatus === "checking") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#fafafa] text-sm text-gray-500">
+        Checking your session…
+      </div>
+    );
+  }
 
   return (
-    <div className="flex min-h-screen bg-gradient-to-br from-[#f3f2ff] via-[#f8f7ff] to-white text-gray-900">
+    <div className="flex min-h-screen bg-[#fafafa] text-gray-900">
       <aside className="hidden w-[260px] flex-col justify-between border-r border-transparent bg-white/90 px-6 py-8 shadow-[8px_0_40px_rgba(90,84,255,0.12)] backdrop-blur-xl lg:flex">
         <div className="space-y-10">
           <div>
@@ -52,7 +108,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           </nav>
         </div>
 
-        <div className="space-y-3 rounded-2xl border border-transparent bg-[#f8f7ff] p-4 shadow-inner">
+        <div className="space-y-3 rounded-2xl border border-transparent bg-[#fafafa] p-4 shadow-inner">
           <div className="flex items-center gap-3">
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-100 text-sm font-semibold text-indigo-600">
               JD
@@ -71,7 +127,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       <main className="flex w-full flex-1 flex-col">
         <header className="border-b border-transparent bg-white/80 px-6 py-6 shadow-[0_10px_40px_rgba(90,84,255,0.12)] backdrop-blur-xl lg:hidden">
           <div className="flex items-center justify-between">
-            <Link href="/dashboard" className="text-base font-semibold text-indigo-600">
+            <Link
+              href="/dashboard"
+              className="text-base font-semibold text-indigo-600"
+            >
               Campus Events
             </Link>
             <nav className="flex items-center gap-3 text-sm text-gray-600">

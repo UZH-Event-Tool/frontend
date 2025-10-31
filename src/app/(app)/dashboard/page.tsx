@@ -74,7 +74,7 @@ export default function DashboardPage() {
         </header>
 
         <div className="flex flex-col gap-4 rounded-3xl border border-transparent bg-white/80 p-5 shadow-[0_18px_45px_rgba(90,84,255,0.12)]">
-          <label className="flex w-full items-center gap-3 rounded-full border border-transparent bg-[#f3f5ff] px-5 py-3 text-sm text-gray-600 shadow-inner">
+          <label className="flex w-full items-center gap-3 rounded-full border border-transparent bg-[#fafafa] px-5 py-3 text-sm text-gray-600 shadow-inner">
             <svg
               aria-hidden
               viewBox="0 0 20 20"
@@ -102,7 +102,7 @@ export default function DashboardPage() {
                 className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
                   index === 0
                     ? "bg-indigo-500 text-white shadow-[0_10px_25px_rgba(90,84,255,0.3)]"
-                    : "bg-[#f3f5ff] text-gray-600 hover:bg-[#ece8ff]"
+                    : "bg-[#fafafa] text-gray-600 hover:bg-[#ece8ff]"
                 }`}
               >
                 {category}
@@ -141,7 +141,9 @@ export default function DashboardPage() {
                   <span className="text-lg">🗓</span>
                   <div>
                     <dt className="font-medium text-gray-700">When</dt>
-                    <dd className="text-gray-500">{formatDate(event.startsAt)}</dd>
+                    <dd className="text-gray-500">
+                      {formatDate(event.startsAt)}
+                    </dd>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -156,8 +158,9 @@ export default function DashboardPage() {
                   <div>
                     <dt className="font-medium text-gray-700">Attendance</dt>
                     <dd className="text-gray-500">
-                      {event.slotsTotal - event.slotsAvailable} / {event.slotsTotal} spots filled (
-                      {event.slotsAvailable} left)
+                      {event.slotsTotal - event.slotsAvailable} /{" "}
+                      {event.slotsTotal} spots filled ({event.slotsAvailable}{" "}
+                      left)
                     </dd>
                   </div>
                 </div>
