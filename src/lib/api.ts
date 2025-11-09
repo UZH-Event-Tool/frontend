@@ -8,20 +8,11 @@ type JsonResult<T> = {
   response: Response;
 };
 
-export async function postJson<TResponse>(
+async function requestJson<TResponse>(
   path: string,
-  body: unknown,
   init: RequestInit = {},
 ): Promise<JsonResult<TResponse>> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(init.headers ?? {}),
-    },
-    body: JSON.stringify(body),
-    ...init,
-  });
+  const response = await fetch(`${API_BASE_URL}${path}`, init);
 
   let parsed: unknown = null;
   try {
@@ -43,4 +34,27 @@ export async function postJson<TResponse>(
   }
 
   return { data: parsed as TResponse, response };
+}
+
+export async function fetchJson<TResponse>(
+  path: string,
+  init: RequestInit = {},
+) {
+  return requestJson<TResponse>(path, init);
+}
+
+export async function postJson<TResponse>(
+  path: string,
+  body: unknown,
+  init: RequestInit = {},
+): Promise<JsonResult<TResponse>> {
+  return requestJson<TResponse>(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(init.headers ?? {}),
+    },
+    body: JSON.stringify(body),
+    ...init,
+  });
 }

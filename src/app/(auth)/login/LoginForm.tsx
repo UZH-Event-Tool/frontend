@@ -13,7 +13,7 @@ type LoginResponse = {
   token?: string;
   user?: {
     id?: string;
-    email?: string;
+    universityEmail?: string;
     fullName?: string;
     [key: string]: unknown;
   };
@@ -22,7 +22,7 @@ type LoginResponse = {
 
 export function LoginForm() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [universityEmail, setUniversityEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -34,7 +34,7 @@ export function LoginForm() {
 
     try {
       const { data } = await postJson<LoginResponse>("/auth/login", {
-        email,
+        universityEmail,
         password,
       });
 
@@ -72,14 +72,14 @@ export function LoginForm() {
             </p>
           ) : null}
           <label className="flex flex-col gap-2 text-sm font-medium text-gray-600">
-            Email
+            University Email
             <input
               className={inputClasses}
               placeholder="your.email@university.edu"
               type="email"
               autoComplete="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              value={universityEmail}
+              onChange={(event) => setUniversityEmail(event.target.value)}
               required
             />
           </label>

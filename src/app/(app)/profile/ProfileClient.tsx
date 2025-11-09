@@ -10,7 +10,6 @@ type Profile = {
   id: string;
   firstName: string | null;
   lastName: string | null;
-  email: string;
   universityEmail: string | null;
   dateOfBirth: string | null;
   gender: string | null;
@@ -27,7 +26,6 @@ type Profile = {
 type FormState = {
   firstName: string;
   lastName: string;
-  email: string;
   universityEmail: string;
   dateOfBirth: string;
   gender: string;
@@ -41,7 +39,6 @@ type FormState = {
 const formDefaults: FormState = {
   firstName: "",
   lastName: "",
-  email: "",
   universityEmail: "",
   dateOfBirth: "",
   gender: "",
@@ -89,7 +86,6 @@ export function ProfileClient() {
     setForm({
       firstName: data.firstName ?? "",
       lastName: data.lastName ?? "",
-      email: data.email,
       universityEmail: data.universityEmail ?? "",
       dateOfBirth: data.dateOfBirth
         ? new Date(data.dateOfBirth).toISOString().slice(0, 10)
@@ -215,7 +211,6 @@ export function ProfileClient() {
     const formData = new FormData();
     formData.set("firstName", form.firstName.trim());
     formData.set("lastName", form.lastName.trim());
-    formData.set("email", form.email.trim());
     formData.set("universityEmail", form.universityEmail.trim());
     formData.set("age", String(ageNumber));
     formData.set("location", form.location.trim());
@@ -307,16 +302,17 @@ export function ProfileClient() {
     );
   }
 
+  const universityEmailFallback = profile.universityEmail ?? "";
   const displayName =
     [profile.firstName, profile.lastName].filter(Boolean).join(" ") ||
-    profile.email;
+    universityEmailFallback;
   const initials = (() => {
     const first = profile.firstName?.[0];
     const last = profile.lastName?.[0];
     if (first || last) {
       return `${first ?? ""}${last ?? ""}`.toUpperCase();
     }
-    return profile.email.slice(0, 2).toUpperCase();
+    return universityEmailFallback.slice(0, 2).toUpperCase();
   })();
   const ageLabel =
     profile.age != null ? `${profile.age} years old` : "Age not provided";
@@ -326,7 +322,11 @@ export function ProfileClient() {
       icon: "🎓",
       value: profile.fieldOfStudies ?? "Field of studies not provided",
     },
-    { icon: "✉️", value: profile.email },
+    {
+      icon: "✉️",
+      value:
+        profile.universityEmail ?? "University email not provided",
+    },
   ];
   const tabItems = [
     {
@@ -370,7 +370,7 @@ export function ProfileClient() {
             </p>
           </header>
 
-          <div className="mt-6 flex flex-col gap-6 rounded-3xl border border-transparent bg-white/90 p-6 shadow-[0_18px_55px_rgba(90,84,255,0.12)]">
+          <div className="mt-6 flex flex-col gap-6">
             <div className="flex items-start gap-4 md:items-center md:gap-6">
               <div className="relative h-20 w-20 overflow-hidden rounded-full bg-gradient-to-br from-[#5a54ff] to-[#7a74ff] text-xl font-semibold text-white shadow-xl md:h-24 md:w-24">
                 {currentImage ? (
@@ -554,18 +554,6 @@ export function ProfileClient() {
                     value={form.lastName}
                     onChange={(event) =>
                       handleInputChange("lastName")(event.target.value)
-                    }
-                    required
-                  />
-                </label>
-                <label className="flex flex-col gap-2 text-xs font-medium text-gray-600">
-                  Email
-                  <input
-                    type="email"
-                    className="rounded-full border border-transparent bg-white px-4 py-2 text-sm text-gray-700 shadow-inner focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                    value={form.email}
-                    onChange={(event) =>
-                      handleInputChange("email")(event.target.value)
                     }
                     required
                   />

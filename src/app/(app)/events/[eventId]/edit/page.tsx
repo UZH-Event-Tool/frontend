@@ -1,123 +1,98 @@
-import Link from "next/link";
+"use client";
 
-const mockEvent = {
-  id: "1",
-  name: "Welcome Mixer @ Campus",
-  description:
-    "Kick off the semester with fellow UZH students. Expect music, snacks, and speed networking rounds to meet new friends quickly.",
-  location: "UZH Zentrum, Main Hall",
-  startsAt: "2025-10-21T18:00",
-  endsAt: "2025-10-21T21:00",
-  capacity: 50,
-  category: "Networking",
-  theme: "Newcomer Week",
-};
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { API_BASE_URL } from "@/lib/api";
+import { getAuthToken } from "@/lib/auth";
+import { EventForm, type EventFormInitialData } from "../../EventForm";
 
 export default function EditEventPage() {
+  const params = useParams<{ eventId: string }>();
+  const router = useRouter();
+  const { eventId } = params;
+  const [eventData, setEventData] = useState<EventFormInitialData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function fetchEvent() {
+      if (!eventId) {
+        setError("Missing event id.");
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      setError(null);
+      const token = getAuthToken();
+      if (!token) {
+        setError("You need to sign in to edit this event.");
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/events/${eventId}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        const payload = await response.json().catch(() => null);
+
+        if (!response.ok || !payload || typeof payload !== "object") {
+          throw new Error(
+            (payload as { message?: string })?.message ?? "Unable to load the event.",
+          );
+        }
+
+        const event = (payload as { event: EventFormInitialData }).event;
+        setEventData(event);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Unable to load the event.";
+        setError(message);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    fetchEvent();
+  }, [eventId]);
+
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
       <header className="flex flex-col gap-2">
         <Link
-          href={`/events/${mockEvent.id}`}
+          href="/dashboard"
           className="text-sm font-medium text-indigo-600 transition hover:text-indigo-500"
         >
-          ← Back to event
+          ← Back to events
         </Link>
         <h1 className="text-3xl font-semibold text-gray-900">
-          Edit “{mockEvent.name}”
+          {eventData ? `Edit “${eventData.name}”` : "Edit event"}
         </h1>
         <p className="text-sm text-gray-500">
           Update event details. Changes are visible to attendees immediately.
         </p>
       </header>
 
-      <form className="space-y-6 rounded-3xl border border-transparent bg-white/90 p-8 shadow-[0_20px_50px_rgba(90,84,255,0.15)]">
-        <div className="grid gap-4">
-          <label className="flex flex-col gap-2 text-sm text-gray-600">
-            <span className="font-medium text-gray-900">Event Name</span>
-            <input
-              defaultValue={mockEvent.name}
-              className="rounded-full border border-transparent bg-[#fafafa] px-4 py-3 text-sm text-gray-900 shadow-inner outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200"
-            />
-          </label>
-          <label className="flex flex-col gap-2 text-sm text-gray-600">
-            <span className="font-medium text-gray-900">Description</span>
-            <textarea
-              defaultValue={mockEvent.description}
-              rows={4}
-              className="rounded-2xl border border-transparent bg-[#fafafa] px-4 py-3 text-sm text-gray-900 shadow-inner outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200"
-            />
-          </label>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-2 text-sm text-gray-600">
-              <span className="font-medium text-gray-900">Location</span>
-              <input
-                defaultValue={mockEvent.location}
-                className="rounded-full border border-transparent bg-[#fafafa] px-4 py-3 text-sm text-gray-900 shadow-inner outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200"
-              />
-            </label>
-            <label className="flex flex-col gap-2 text-sm text-gray-600">
-              <span className="font-medium text-gray-900">
-                Maximum attendees
-              </span>
-              <input
-                type="number"
-                defaultValue={mockEvent.capacity}
-                className="rounded-full border border-transparent bg-[#fafafa] px-4 py-3 text-sm text-gray-900 shadow-inner outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200"
-              />
-            </label>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-2 text-sm text-gray-600">
-              <span className="font-medium text-gray-900">Start Time</span>
-              <input
-                type="datetime-local"
-                defaultValue={mockEvent.startsAt}
-                className="rounded-full border border-transparent bg-[#fafafa] px-4 py-3 text-sm text-gray-900 shadow-inner outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200"
-              />
-            </label>
-            <label className="flex flex-col gap-2 text-sm text-gray-600">
-              <span className="font-medium text-gray-900">End Time</span>
-              <input
-                type="datetime-local"
-                defaultValue={mockEvent.endsAt}
-                className="rounded-full border border-transparent bg-[#fafafa] px-4 py-3 text-sm text-gray-900 shadow-inner outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200"
-              />
-            </label>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-2 text-sm text-gray-600">
-              <span className="font-medium text-gray-900">Event Category</span>
-              <input
-                defaultValue={mockEvent.category}
-                className="rounded-full border border-transparent bg-[#fafafa] px-4 py-3 text-sm text-gray-900 shadow-inner outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200"
-              />
-            </label>
-            <label className="flex flex-col gap-2 text-sm text-gray-600">
-              <span className="font-medium text-gray-900">Event Theme</span>
-              <input
-                defaultValue={mockEvent.theme}
-                className="rounded-full border border-transparent bg-[#fafafa] px-4 py-3 text-sm text-gray-900 shadow-inner outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200"
-              />
-            </label>
-          </div>
+      {isLoading ? (
+        <div className="rounded-3xl border border-dashed border-indigo-100 bg-white/90 p-8 text-center text-sm text-gray-500 shadow-[0_18px_45px_rgba(90,84,255,0.08)]">
+          Loading event details...
         </div>
-
-        <div className="flex justify-end gap-3">
-          <button
-            type="button"
-            className="rounded-full border border-transparent bg-[#fafafa] px-5 py-2 text-sm font-semibold text-indigo-600 shadow-inner transition hover:bg-[#ece8ff]"
-          >
-            Discard changes
-          </button>
-          <button
-            type="submit"
-            className="rounded-full bg-gradient-to-r from-[#5a54ff] to-[#6f6aff] px-5 py-2 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(90,84,255,0.28)] transition hover:shadow-[0_16px_34px_rgba(90,84,255,0.35)]"
-          >
-            Save updates
-          </button>
+      ) : error ? (
+        <div className="rounded-3xl border border-dashed border-red-200 bg-white/90 p-8 text-center text-sm text-red-600 shadow-[0_18px_45px_rgba(90,84,255,0.08)]">
+          {error}
         </div>
-      </form>
+      ) : eventData ? (
+        <EventForm
+          mode="edit"
+          eventId={eventId}
+          initialEvent={eventData}
+          onSuccess={() => router.push("/dashboard")}
+        />
+      ) : null}
     </div>
   );
 }

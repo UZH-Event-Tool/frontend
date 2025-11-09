@@ -1,48 +1,34 @@
+"use client";
+
+import Image from "next/image";
 import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { API_BASE_URL, fetchJson } from "@/lib/api";
+import { getAuthToken, getTokenPayload } from "@/lib/auth";
 
-const sampleEvents = [
-  {
-    id: "1",
-    name: "Basketball Tournament Finals",
-    description:
-      "Cheer for your faculty’s team in the inter-department finals. Music, snacks, and team spirit guaranteed!",
-    location: "Campus Sports Center",
-    slotsAvailable: 12,
-    slotsTotal: 50,
-    startsAt: "2025-10-20T18:00:00Z",
-    category: "Sports",
-    coverClass:
-      "bg-[radial-gradient(circle_at_top,_#6a9bff,_#3c62ff,_#1a2a6c)]",
-  },
-  {
-    id: "2",
-    name: "Data Structures Study Group",
-    description:
-      "Weekly problem-solving session covering trees, graphs, and dynamic programming. All levels welcome!",
-    location: "Main Library, Room 204",
-    slotsAvailable: 3,
-    slotsTotal: 15,
-    startsAt: "2025-10-15T14:00:00Z",
-    category: "Study",
-    coverClass:
-      "bg-[radial-gradient(circle_at_top,_#ffd9e8,_#f093fb,_#6d2ad4)]",
-  },
-  {
-    id: "3",
-    name: "Fall Semester Mixer",
-    description:
-      "End-of-midterms celebration with live DJ, mocktails, and photobooth. Open to all UZH students!",
-    location: "Student Union Hall",
-    slotsAvailable: 13,
-    slotsTotal: 100,
-    startsAt: "2025-10-18T20:00:00Z",
-    category: "Party",
-    coverClass:
-      "bg-[radial-gradient(circle_at_top,_#fdf2a1,_#ffbb70,_#f76b45)]",
-  },
-];
+type Event = {
+  id: string;
+  name: string;
+  description: string;
+  location: string;
+  startsAt: string;
+  theme: string;
+  images: string[];
+  category: string;
+  ownerName: string;
+  ownerId: string;
+  attendanceLimit: number;
+  registrationDeadline: string;
+  createdAt: string;
+  updatedAt: string;
+  attendeesCount?: number;
+  isRegistered?: boolean;
+};
 
-const filterCategories = [
+const FALLBACK_GRADIENT =
+  "bg-[radial-gradient(circle_at_top,_#c7d2ff,_#8da2fb,_#5a54ff)]";
+
+const DEFAULT_CATEGORIES = [
   "All",
   "Sports",
   "Study",
@@ -52,14 +38,199 @@ const filterCategories = [
   "Social",
 ];
 
-function formatDate(dateIso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
+function formatDateTime(dateIso: string) {
+  const date = new Date(dateIso);
+  const formattedDate = new Intl.DateTimeFormat("en-GB", {
     dateStyle: "medium",
+  }).format(date);
+  const formattedTime = new Intl.DateTimeFormat("en-GB", {
     timeStyle: "short",
-  }).format(new Date(dateIso));
+  }).format(date);
+  return `${formattedDate} at ${formattedTime}`;
 }
 
 export default function DashboardPage() {
+  const [events, setEvents] = useState<Event[]>([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [activeCategory, setActiveCategory] = useState("All");
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [registrationCounts, setRegistrationCounts] = useState<
+    Record<string, number>
+  >({});
+  const [registeredEvents, setRegisteredEvents] = useState<
+    Record<string, boolean>
+  >({});
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const payload = getTokenPayload();
+    if (payload?.sub) {
+      setCurrentUserId(payload.sub);
+    }
+  }, []);
+
+  useEffect(() => {
+    async function loadEvents() {
+      setIsLoading(true);
+      setError(null);
+      const token = getAuthToken();
+
+      if (!token) {
+        setError("You need to sign in again to view events.");
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        const { data } = await fetchJson<{ events: Event[] }>("/events", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        setEvents(data.events);
+        const counts: Record<string, number> = {};
+        const registrations: Record<string, boolean> = {};
+        data.events.forEach((event) => {
+          counts[event.id] = event.attendeesCount ?? 0;
+          if (event.isRegistered) {
+            registrations[event.id] = true;
+          }
+        });
+        setRegistrationCounts(counts);
+        setRegisteredEvents(registrations);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Unable to load events.";
+        setError(message);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    void loadEvents();
+  }, []);
+
+  const categories = useMemo(() => {
+    const unique = new Set(events.map((event) => event.category).filter(Boolean));
+    const ordered = [...DEFAULT_CATEGORIES];
+    unique.forEach((category) => {
+      if (!ordered.includes(category)) {
+        ordered.push(category);
+      }
+    });
+    return ordered;
+  }, [events]);
+
+  const filteredEvents = useMemo(() => {
+    if (!events.length) {
+      return [];
+    }
+
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+
+    return events.filter((event) => {
+      const matchesCategory =
+        activeCategory === "All" || event.category === activeCategory;
+      const matchesSearch =
+        !normalizedSearch ||
+        [event.name, event.description, event.location, event.ownerName]
+          .filter(Boolean)
+          .some((value) => value.toLowerCase().includes(normalizedSearch));
+      return matchesCategory && matchesSearch;
+    });
+  }, [events, searchTerm, activeCategory]);
+
+  const showEmptyState =
+    !isLoading && !error && events.length > 0 && filteredEvents.length === 0;
+
+  const handleToggleRegistration = (event: Event) => {
+    setActionError(null);
+    const isRegistered = Boolean(registeredEvents[event.id]);
+    const filled = registrationCounts[event.id] ?? 0;
+    const hasLimit = (event.attendanceLimit ?? 0) > 0;
+
+    if (!isRegistered && hasLimit && filled >= event.attendanceLimit) {
+      setActionError("This event is already full.");
+      return;
+    }
+
+    setRegisteredEvents((prev) => {
+      const next = { ...prev };
+      if (isRegistered) {
+        delete next[event.id];
+      } else {
+        next[event.id] = true;
+      }
+      return next;
+    });
+
+    setRegistrationCounts((counts) => {
+      const current = counts[event.id] ?? 0;
+      if (isRegistered) {
+        return { ...counts, [event.id]: Math.max(current - 1, 0) };
+      }
+      return { ...counts, [event.id]: current + 1 };
+    });
+  };
+
+  const handleDeleteEvent = async (eventId: string, eventName: string) => {
+    const confirmed = window.confirm(
+      `Delete "${eventName}"? This action cannot be undone.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setActionError(null);
+    const token = getAuthToken();
+    if (!token) {
+      setActionError("You need to sign in again to delete this event.");
+      return;
+    }
+
+    setPendingDeleteId(eventId);
+    try {
+      const response = await fetch(`${API_BASE_URL}/events/${eventId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const message =
+          payload && typeof payload === "object" && "message" in payload
+            ? ((payload as { message?: string }).message ??
+              "Unable to delete event.")
+            : "Unable to delete event.";
+        throw new Error(message);
+      }
+
+      setEvents((prev) => prev.filter((event) => event.id !== eventId));
+      setRegistrationCounts((prev) => {
+        const next = { ...prev };
+        delete next[eventId];
+        return next;
+      });
+      setRegisteredEvents((prev) => {
+        const next = { ...prev };
+        delete next[eventId];
+        return next;
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Unable to delete event.";
+      setActionError(message);
+    } finally {
+      setPendingDeleteId(null);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-6">
@@ -92,98 +263,252 @@ export default function DashboardPage() {
             <input
               aria-label="Search events"
               className="flex-1 bg-transparent text-sm text-gray-900 outline-none placeholder:text-gray-400"
-              placeholder="Search events, locations…"
+              placeholder="Search events, locations..."
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
             />
           </label>
           <div className="flex flex-wrap gap-2">
-            {filterCategories.map((category, index) => (
-              <button
-                key={category}
-                className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
-                  index === 0
-                    ? "bg-indigo-500 text-white shadow-[0_10px_25px_rgba(90,84,255,0.3)]"
-                    : "bg-[#fafafa] text-gray-600 hover:bg-[#ece8ff]"
-                }`}
-              >
-                {category}
-              </button>
-            ))}
+            {categories.map((category) => {
+              const isActive = category === activeCategory;
+              return (
+                <button
+                  key={category}
+                  type="button"
+                  className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+                    isActive
+                      ? "bg-indigo-500 text-white shadow-[0_10px_25px_rgba(90,84,255,0.3)]"
+                      : "bg-[#fafafa] text-gray-600 hover:bg-[#ece8ff]"
+                  }`}
+                  onClick={() => setActiveCategory(category)}
+                >
+                  {category}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
+      {actionError ? (
+        <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600 shadow-[0_18px_45px_rgba(90,84,255,0.08)]">
+          {actionError}
+        </div>
+      ) : null}
 
-      <section className="grid gap-6 lg:grid-cols-3">
-        {sampleEvents.map((event) => (
-          <article
-            key={event.id}
-            className="flex flex-col overflow-hidden rounded-3xl border border-transparent bg-white/95 shadow-[0_22px_55px_rgba(90,84,255,0.16)] transition hover:-translate-y-1 hover:shadow-[0_25px_60px_rgba(90,84,255,0.2)]"
-          >
+      {isLoading ? (
+        <section className="grid gap-6 lg:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, index) => (
             <div
-              className={`relative h-40 w-full overflow-hidden ${event.coverClass}`}
-            >
-              <span className="absolute left-4 top-4 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-indigo-600 shadow">
-                {event.category}
-              </span>
+              key={index}
+              className="h-80 animate-pulse rounded-3xl bg-gradient-to-br from-[#f0f0ff] to-[#fafaff]"
+            />
+          ))}
+        </section>
+      ) : error ? (
+        <div className="rounded-3xl border border-dashed border-red-200 bg-white/90 p-6 text-center text-sm text-red-600 shadow-[0_18px_45px_rgba(90,84,255,0.08)]">
+          {error}
+        </div>
+      ) : events.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 rounded-3xl border border-dashed border-indigo-200 bg-white/90 p-10 text-center shadow-[0_18px_45px_rgba(90,84,255,0.08)]">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-indigo-50 text-2xl text-indigo-400">
+            ✨
+          </div>
+          <h2 className="text-lg font-semibold text-gray-900">No events yet</h2>
+          <p className="text-sm text-gray-500">
+            Be the first to organize an event and bring students together.
+          </p>
+          <Link
+            href="/events/new"
+            className="rounded-full bg-indigo-500 px-5 py-2 text-sm font-semibold text-white shadow transition hover:bg-indigo-600"
+          >
+            Create an event
+          </Link>
+        </div>
+      ) : (
+        <>
+          {showEmptyState ? (
+            <div className="rounded-3xl border border-dashed border-indigo-100 bg-white/95 p-8 text-center text-sm text-gray-500 shadow-[0_18px_45px_rgba(90,84,255,0.08)]">
+              No events match your filters. Try a different search or category.
             </div>
+          ) : null}
+          <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+            {filteredEvents.map((event) => {
+              const coverImage = event.images[0] ?? null;
+              const resolvedCoverImage =
+                coverImage && coverImage.startsWith("/")
+                  ? `${API_BASE_URL}${coverImage}`
+                  : coverImage;
+              const isDataImage =
+                typeof resolvedCoverImage === "string" &&
+                resolvedCoverImage.startsWith("data:");
+              const filled = registrationCounts[event.id] ?? 0;
+              const hasLimit = (event.attendanceLimit ?? 0) > 0;
+              const spotsLeft = hasLimit
+                ? Math.max(event.attendanceLimit - filled, 0)
+                : null;
+              const isFull = hasLimit && spotsLeft === 0;
+              const isOwner =
+                currentUserId != null && currentUserId === event.ownerId;
+              const isRegistered = Boolean(registeredEvents[event.id]);
+              const occupancyLabel = hasLimit
+                ? `${filled} / ${event.attendanceLimit} spots filled (${spotsLeft} left)`
+                : `${filled} attendee${filled === 1 ? "" : "s"}`;
 
-            <div className="flex flex-1 flex-col gap-4 p-5">
-              <div className="space-y-2">
-                <h2 className="text-lg font-semibold text-gray-900">
-                  {event.name}
-                </h2>
-                <p className="line-clamp-2 text-sm text-gray-500">
-                  {event.description}
-                </p>
-              </div>
+              return (
+                <article
+                  key={event.id}
+                  className="flex h-full flex-col overflow-hidden rounded-[32px] border border-transparent bg-white shadow-[0_22px_55px_rgba(90,84,255,0.14)] transition hover:-translate-y-1 hover:shadow-[0_30px_70px_rgba(90,84,255,0.18)]"
+                >
+                  <div className="relative h-44 w-full overflow-hidden">
+                    {resolvedCoverImage ? (
+                      <Image
+                        src={resolvedCoverImage}
+                        alt={event.name}
+                        fill
+                        className="object-cover"
+                        sizes="(max-width: 1024px) 100vw, 33vw"
+                        unoptimized={isDataImage}
+                      />
+                    ) : (
+                      <div
+                        className={`flex h-full w-full items-center justify-center text-sm text-white/80 ${FALLBACK_GRADIENT}`}
+                      >
+                        Image coming soon
+                      </div>
+                    )}
+                    <span className="absolute right-4 top-4 rounded-full bg-white/95 px-3 py-1 text-xs font-semibold text-gray-800 shadow">
+                      {event.category}
+                    </span>
+                  </div>
 
-              <dl className="space-y-3 text-sm text-gray-600">
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">🗓</span>
-                  <div>
-                    <dt className="font-medium text-gray-700">When</dt>
-                    <dd className="text-gray-500">
-                      {formatDate(event.startsAt)}
-                    </dd>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">📍</span>
-                  <div>
-                    <dt className="font-medium text-gray-700">Where</dt>
-                    <dd className="text-gray-500">{event.location}</dd>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">👥</span>
-                  <div>
-                    <dt className="font-medium text-gray-700">Attendance</dt>
-                    <dd className="text-gray-500">
-                      {event.slotsTotal - event.slotsAvailable} /{" "}
-                      {event.slotsTotal} spots filled ({event.slotsAvailable}{" "}
-                      left)
-                    </dd>
-                  </div>
-                </div>
-              </dl>
-            </div>
+                  <div className="flex flex-1 flex-col gap-4 p-6">
+                    <div className="space-y-1">
+                      <h2 className="text-xl font-semibold text-gray-900">
+                        {event.name}
+                      </h2>
+                      <p className="line-clamp-2 text-sm text-gray-500">
+                        {event.description}
+                      </p>
+                    </div>
 
-            <div className="flex flex-col gap-2 p-5 pt-0">
-              <Link
-                href={`/events/${event.id}`}
-                className="inline-flex items-center justify-center rounded-full border border-transparent bg-[#f5f5ff] px-4 py-2 text-sm font-medium text-indigo-600 transition hover:bg-[#ece8ff]"
-              >
-                View details
-              </Link>
-              <button
-                className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-[#5a54ff] to-[#6f6aff] px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(90,84,255,0.28)] transition hover:shadow-[0_16px_34px_rgba(90,84,255,0.35)] disabled:bg-gray-300 disabled:text-gray-600 disabled:shadow-none disabled:hover:bg-gray-300"
-                disabled={event.slotsAvailable === 0}
-              >
-                {event.slotsAvailable === 0 ? "Event Full" : "Register"}
-              </button>
-            </div>
-          </article>
-        ))}
-      </section>
+                    <div className="space-y-2 text-sm text-gray-600">
+                      <div className="flex items-center gap-2">
+                        <svg
+                          aria-hidden="true"
+                          viewBox="0 0 24 24"
+                          className="h-4 w-4 text-indigo-500"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={1.5}
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"
+                          />
+                        </svg>
+                        <span>{formatDateTime(event.startsAt)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <svg
+                          aria-hidden="true"
+                          viewBox="0 0 24 24"
+                          className="h-4 w-4 text-indigo-500"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={1.5}
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M12 11.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Z"
+                          />
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 0 1 15 0Z"
+                          />
+                        </svg>
+                        <span>{event.location}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <svg
+                          aria-hidden="true"
+                          viewBox="0 0 24 24"
+                          className="h-4 w-4 text-indigo-500"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={1.5}
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 0c4.142 0 7.5 2.015 7.5 4.5S16.142 21 12 21s-7.5-2.015-7.5-4.5S7.858 12 12 12Z"
+                          />
+                        </svg>
+                        <span>{event.ownerName}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <svg
+                          aria-hidden="true"
+                          viewBox="0 0 24 24"
+                          className="h-4 w-4 text-indigo-500"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={1.5}
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M7 8h10m-9 4h8m-7 4h6"
+                          />
+                        </svg>
+                        <span>{occupancyLabel}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 border-t border-gray-100 px-6 py-5">
+                    {isOwner ? (
+                      <>
+                        <Link
+                          href={`/events/${event.id}/edit`}
+                          className="flex-1 rounded-full border border-gray-200 px-5 py-2 text-center text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
+                        >
+                          Edit
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteEvent(event.id, event.name)}
+                          className="flex-1 rounded-full bg-red-500 px-5 py-2 text-sm font-semibold text-white shadow transition hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-70"
+                          disabled={pendingDeleteId === event.id}
+                        >
+                          {pendingDeleteId === event.id ? "Deleting..." : "Delete"}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleToggleRegistration(event)}
+                        disabled={isFull && !isRegistered}
+                        className={`w-full rounded-full px-5 py-2 text-sm font-semibold transition ${
+                          isRegistered
+                            ? "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                            : isFull
+                              ? "cursor-not-allowed bg-gray-200 text-gray-500"
+                              : "bg-gradient-to-r from-[#5a54ff] to-[#6f6aff] text-white shadow-[0_12px_30px_rgba(90,84,255,0.28)] hover:shadow-[0_16px_34px_rgba(90,84,255,0.35)]"
+                        }`}
+                      >
+                        {isRegistered ? "Deregister" : isFull ? "Full" : "Register"}
+                      </button>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </section>
+        </>
+      )}
     </div>
   );
 }

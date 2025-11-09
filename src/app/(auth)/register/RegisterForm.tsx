@@ -12,7 +12,6 @@ const inputClasses =
 export function RegisterForm() {
   const router = useRouter();
   const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
   const [age, setAge] = useState("");
   const [location, setLocation] = useState("");
   const [fieldOfStudies, setFieldOfStudies] = useState("");
@@ -47,16 +46,21 @@ export function RegisterForm() {
       return;
     }
 
+    const trimmedUniversityEmail = universityEmail.trim();
+    if (!trimmedUniversityEmail) {
+      setError("University email is required.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const { data } = await postJson<{ token?: string }>("/auth/register", {
         fullName,
-        email,
         password,
         age: numericAge,
         location,
         fieldOfStudies,
-        universityEmail: universityEmail || undefined,
+        universityEmail: trimmedUniversityEmail,
         interests,
       });
 
@@ -115,18 +119,6 @@ export function RegisterForm() {
               required
             />
           </label>
-          <label className="flex flex-col gap-2 text-sm font-medium text-gray-600">
-            Email
-            <input
-              className={inputClasses}
-              placeholder="john.doe@uzh.ch"
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              autoComplete="email"
-              required
-            />
-          </label>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="flex flex-col gap-2 text-sm font-medium text-gray-600">
               Age
@@ -165,7 +157,7 @@ export function RegisterForm() {
             />
           </label>
           <label className="flex flex-col gap-2 text-sm font-medium text-gray-600">
-            University Email <span className="text-xs text-gray-400">(optional)</span>
+            University Email
             <input
               className={inputClasses}
               placeholder="your.email@university.edu"
@@ -173,6 +165,7 @@ export function RegisterForm() {
               value={universityEmail}
               onChange={(event) => setUniversityEmail(event.target.value)}
               autoComplete="email"
+              required
             />
           </label>
           <label className="flex flex-col gap-2 text-sm font-medium text-gray-600">
