@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useMemo, useState } from "react";
-import { postJson } from "@/lib/api";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { API_BASE_URL } from "@/lib/api";
 import { setAuthToken } from "@/lib/auth";
 
 const inputClasses =
@@ -21,6 +21,18 @@ export function RegisterForm() {
   const [interestInput, setInterestInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [profileImage, setProfileImage] = useState<File | null>(null);
+  const [profileImagePreview, setProfileImagePreview] = useState<string | null>(null);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (profileImagePreview) {
+        URL.revokeObjectURL(profileImagePreview);
+      }
+    };
+  }, [profileImagePreview]);
 
   const interests = useMemo(
     () =>
@@ -54,17 +66,35 @@ export function RegisterForm() {
 
     setIsSubmitting(true);
     try {
-      const { data } = await postJson<{ token?: string }>("/auth/register", {
-        fullName,
-        password,
-        age: numericAge,
-        location,
-        fieldOfStudies,
-        universityEmail: trimmedUniversityEmail,
-        interests,
+      const formData = new FormData();
+      formData.set("fullName", fullName.trim());
+      formData.set("password", password);
+      formData.set("age", String(numericAge));
+      formData.set("location", location.trim());
+      formData.set("fieldOfStudies", fieldOfStudies.trim());
+      formData.set("universityEmail", trimmedUniversityEmail);
+      interests.forEach((interest) => formData.append("interests", interest));
+      if (profileImage) {
+        formData.append("profileImage", profileImage);
+      }
+
+      const response = await fetch(`${API_BASE_URL}/auth/register`, {
+        method: "POST",
+        body: formData,
       });
 
-      if (data?.token) {
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        const message =
+          data && typeof data === "object" && "message" in data
+            ? (data as { message?: string }).message ??
+              "Unable to create your account."
+            : "Unable to create your account.";
+        throw new Error(message);
+      }
+
+      if (data?.token && typeof data.token === "string") {
         setAuthToken(data.token);
       }
 
@@ -91,15 +121,86 @@ export function RegisterForm() {
           </p>
         </div>
 
-        <button
-          type="button"
-          className="mt-8 flex w-full flex-col items-center gap-3 rounded-3xl border-2 border-dashed border-indigo-100 bg-[#f8fafc] px-6 py-6 text-sm font-medium text-indigo-600 transition hover:border-indigo-200 hover:bg-[#e2e8f0]"
+        <div
+          className={`mt-8 flex w-full flex-col items-center gap-3 rounded-3xl border-2 border-dashed px-6 py-6 text-sm font-medium transition ${
+            isDraggingFile ? "border-indigo-400 bg-[#e2e8f0]" : "border-indigo-100 bg-[#f8fafc]"
+          }`}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setIsDraggingFile(true);
+          }}
+          onDragLeave={() => setIsDraggingFile(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setIsDraggingFile(false);
+            const file = event.dataTransfer.files?.[0];
+            if (file) {
+              if (!["image/png", "image/jpeg"].includes(file.type)) {
+                setError("Profile picture must be a PNG or JPEG image.");
+                setProfileImage(null);
+                setProfileImagePreview(null);
+                return;
+              }
+              setError(null);
+              setProfileImage(file);
+              if (profileImagePreview) {
+                URL.revokeObjectURL(profileImagePreview);
+              }
+              setProfileImagePreview(URL.createObjectURL(file));
+            }
+          }}
         >
-          <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-3xl text-indigo-500 shadow-inner">
-            ⬆️
-          </span>
-          Upload Profile Picture
-        </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg"
+            className="sr-only"
+            onChange={(event) => {
+              const file = event.target.files?.[0] ?? null;
+              if (!file) {
+                setProfileImage(null);
+                setProfileImagePreview(null);
+                return;
+              }
+              if (!["image/png", "image/jpeg"].includes(file.type)) {
+                setError("Profile picture must be a PNG or JPEG image.");
+                setProfileImage(null);
+                setProfileImagePreview(null);
+                return;
+              }
+              setError(null);
+              setProfileImage(file);
+              if (profileImagePreview) {
+                URL.revokeObjectURL(profileImagePreview);
+              }
+              setProfileImagePreview(URL.createObjectURL(file));
+            }}
+          />
+          <button
+            type="button"
+            className="flex w-full flex-col items-center gap-3 text-indigo-600"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-3xl text-indigo-500 shadow-inner">
+              ⬆️
+            </span>
+            {profileImage ? "Change Profile Picture" : "Upload Profile Picture"}
+          </button>
+          {profileImagePreview ? (
+            <div className="flex flex-col items-center gap-2">
+              <span className="text-xs text-gray-500">{profileImage.name}</span>
+              <img
+                src={profileImagePreview}
+                alt="Profile preview"
+                className="h-16 w-16 rounded-full object-cover"
+              />
+            </div>
+          ) : (
+            <p className="text-xs text-gray-500">
+              Drag & drop a PNG or JPEG image, or click to browse.
+            </p>
+          )}
+        </div>
 
         <form className="mt-8 space-y-5" onSubmit={handleSubmit}>
           {error ? (

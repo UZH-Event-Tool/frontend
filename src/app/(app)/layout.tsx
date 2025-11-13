@@ -1,9 +1,10 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getAuthToken, clearAuthToken, logout } from "@/lib/auth";
 import { API_BASE_URL } from "@/lib/api";
 
@@ -12,6 +13,7 @@ type CurrentUser = {
   lastName: string | null;
   fullName: string | null;
   universityEmail: string | null;
+  profileImageUrl: string | null;
 };
 
 type NavLink = {
@@ -146,6 +148,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             lastName: userPayload.lastName ?? null,
             fullName: userPayload.fullName ?? null,
             universityEmail: userPayload.universityEmail ?? null,
+            profileImageUrl: userPayload.profileImageUrl ?? null,
           });
         }
 
@@ -188,7 +191,14 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     "Student";
 
   const displayEmail = currentUser?.universityEmail ?? "";
-
+  const avatarUrl = useMemo(() => {
+    if (!currentUser?.profileImageUrl) {
+      return null;
+    }
+    return currentUser.profileImageUrl.startsWith("http")
+      ? currentUser.profileImageUrl
+      : `${API_BASE_URL}${currentUser.profileImageUrl}`;
+  }, [currentUser?.profileImageUrl]);
   const initials = (() => {
     if (currentUser?.firstName || currentUser?.lastName) {
       const firstInitial = currentUser?.firstName?.charAt(0) ?? "";
@@ -258,9 +268,21 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
         <div className="space-y-3 rounded-2xl border border-transparent bg-[#fafafa] p-4 shadow-inner">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-100 text-sm font-semibold text-indigo-600">
-              {initials}
-            </div>
+            {avatarUrl ? (
+              <div className="relative h-12 w-12 overflow-hidden rounded-full">
+                <Image
+                  src={avatarUrl}
+                  alt={displayName}
+                  fill
+                  sizes="48px"
+                  className="object-cover"
+                />
+              </div>
+            ) : (
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-100 text-sm font-semibold text-indigo-600">
+                {initials}
+              </div>
+            )}
             <div>
               <p className="text-sm font-medium text-gray-700">{displayName}</p>
               {displayEmail ? (
