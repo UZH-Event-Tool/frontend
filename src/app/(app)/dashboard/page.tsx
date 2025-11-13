@@ -12,10 +12,8 @@ type Event = {
   description: string;
   location: string;
   startsAt: string;
-  theme: string;
-  images: string[];
+  images?: string[];
   category: string;
-  ownerName: string;
   ownerId: string;
   attendanceLimit: number;
   registrationDeadline: string;
@@ -52,7 +50,7 @@ function formatDateTime(dateIso: string) {
 export default function DashboardPage() {
   const [events, setEvents] = useState<Event[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
-  const [activeCategory, setActiveCategory] = useState("All");
+  const [activeCategories, setActiveCategories] = useState<string[]>(["All"]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -64,6 +62,9 @@ export default function DashboardPage() {
   >({});
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [eventPendingDeletion, setEventPendingDeletion] = useState<Event | null>(
+    null,
+  );
 
   useEffect(() => {
     const payload = getTokenPayload();
@@ -114,7 +115,9 @@ export default function DashboardPage() {
   }, []);
 
   const categories = useMemo(() => {
-    const unique = new Set(events.map((event) => event.category).filter(Boolean));
+    const unique = new Set(
+      events.map((event) => event.category).filter(Boolean)
+    );
     const ordered = [...DEFAULT_CATEGORIES];
     unique.forEach((category) => {
       if (!ordered.includes(category)) {
@@ -133,15 +136,16 @@ export default function DashboardPage() {
 
     return events.filter((event) => {
       const matchesCategory =
-        activeCategory === "All" || event.category === activeCategory;
+        activeCategories.includes("All") ||
+        activeCategories.includes(event.category);
       const matchesSearch =
         !normalizedSearch ||
-        [event.name, event.description, event.location, event.ownerName]
+        [event.name, event.description, event.location, event.ownerName ?? ""]
           .filter(Boolean)
           .some((value) => value.toLowerCase().includes(normalizedSearch));
       return matchesCategory && matchesSearch;
     });
-  }, [events, searchTerm, activeCategory]);
+  }, [events, searchTerm, activeCategories]);
 
   const showEmptyState =
     !isLoading && !error && events.length > 0 && filteredEvents.length === 0;
@@ -176,15 +180,7 @@ export default function DashboardPage() {
     });
   };
 
-  const handleDeleteEvent = async (eventId: string, eventName: string) => {
-    const confirmed = window.confirm(
-      `Delete "${eventName}"? This action cannot be undone.`,
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
+  const handleDeleteEvent = async (event: Event) => {
     setActionError(null);
     const token = getAuthToken();
     if (!token) {
@@ -192,9 +188,9 @@ export default function DashboardPage() {
       return;
     }
 
-    setPendingDeleteId(eventId);
+    setPendingDeleteId(event.id);
     try {
-      const response = await fetch(`${API_BASE_URL}/events/${eventId}`, {
+      const response = await fetch(`${API_BASE_URL}/events/${event.id}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -205,23 +201,24 @@ export default function DashboardPage() {
         const payload = await response.json().catch(() => null);
         const message =
           payload && typeof payload === "object" && "message" in payload
-            ? ((payload as { message?: string }).message ??
-              "Unable to delete event.")
+            ? (payload as { message?: string }).message ??
+              "Unable to delete event."
             : "Unable to delete event.";
         throw new Error(message);
       }
 
-      setEvents((prev) => prev.filter((event) => event.id !== eventId));
+      setEvents((prev) => prev.filter((item) => item.id !== event.id));
       setRegistrationCounts((prev) => {
         const next = { ...prev };
-        delete next[eventId];
+        delete next[event.id];
         return next;
       });
       setRegisteredEvents((prev) => {
         const next = { ...prev };
-        delete next[eventId];
+        delete next[event.id];
         return next;
       });
+      setEventPendingDeletion(null);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Unable to delete event.";
@@ -231,7 +228,27 @@ export default function DashboardPage() {
     }
   };
 
+  const requestDeleteEvent = (event: Event) => {
+    setActionError(null);
+    setEventPendingDeletion(event);
+  };
+
+  const handleConfirmDelete = () => {
+    if (!eventPendingDeletion) {
+      return;
+    }
+    void handleDeleteEvent(eventPendingDeletion);
+  };
+
+  const handleCancelDelete = () => {
+    if (pendingDeleteId) {
+      return;
+    }
+    setEventPendingDeletion(null);
+  };
+
   return (
+    <>
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-6">
         <header>
@@ -270,7 +287,7 @@ export default function DashboardPage() {
           </label>
           <div className="flex flex-wrap gap-2">
             {categories.map((category) => {
-              const isActive = category === activeCategory;
+              const isActive = activeCategories.includes(category);
               return (
                 <button
                   key={category}
@@ -280,7 +297,19 @@ export default function DashboardPage() {
                       ? "bg-indigo-500 text-white shadow-[0_10px_25px_rgba(90,84,255,0.3)]"
                       : "bg-[#fafafa] text-gray-600 hover:bg-[#ece8ff]"
                   }`}
-                  onClick={() => setActiveCategory(category)}
+                  onClick={() => {
+                    setActiveCategories((prev) => {
+                      if (category === "All") {
+                        return ["All"];
+                      }
+                      const withoutAll = prev.filter((item) => item !== "All");
+                      if (withoutAll.includes(category)) {
+                        const next = withoutAll.filter((item) => item !== category);
+                        return next.length ? next : ["All"];
+                      }
+                      return [...withoutAll, category];
+                    });
+                  }}
                 >
                   {category}
                 </button>
@@ -479,11 +508,13 @@ export default function DashboardPage() {
                         </Link>
                         <button
                           type="button"
-                          onClick={() => handleDeleteEvent(event.id, event.name)}
+                          onClick={() => requestDeleteEvent(event)}
                           className="flex-1 rounded-full bg-red-500 px-5 py-2 text-sm font-semibold text-white shadow transition hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-70"
                           disabled={pendingDeleteId === event.id}
                         >
-                          {pendingDeleteId === event.id ? "Deleting..." : "Delete"}
+                          {pendingDeleteId === event.id
+                            ? "Deleting..."
+                            : "Delete"}
                         </button>
                       </>
                     ) : (
@@ -495,11 +526,15 @@ export default function DashboardPage() {
                           isRegistered
                             ? "bg-gray-100 text-gray-700 hover:bg-gray-200"
                             : isFull
-                              ? "cursor-not-allowed bg-gray-200 text-gray-500"
-                              : "bg-gradient-to-r from-[#5a54ff] to-[#6f6aff] text-white shadow-[0_12px_30px_rgba(90,84,255,0.28)] hover:shadow-[0_16px_34px_rgba(90,84,255,0.35)]"
+                            ? "cursor-not-allowed bg-gray-200 text-gray-500"
+                            : "bg-gradient-to-r from-[#5a54ff] to-[#6f6aff] text-white shadow-[0_12px_30px_rgba(90,84,255,0.28)] hover:shadow-[0_16px_34px_rgba(90,84,255,0.35)]"
                         }`}
                       >
-                        {isRegistered ? "Deregister" : isFull ? "Full" : "Register"}
+                        {isRegistered
+                          ? "Deregister"
+                          : isFull
+                          ? "Full"
+                          : "Register"}
                       </button>
                     )}
                   </div>
@@ -510,5 +545,48 @@ export default function DashboardPage() {
         </>
       )}
     </div>
+      {eventPendingDeletion ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-[32px] bg-white p-8 text-center shadow-[0_24px_60px_rgba(27,18,66,0.18)]">
+            <div className="relative mb-6 flex justify-end">
+              <button
+                type="button"
+                onClick={handleCancelDelete}
+                className="text-gray-400 transition hover:text-gray-600"
+                aria-label="Close delete confirmation"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-red-50 text-2xl">
+              🗑️
+            </div>
+            <h2 className="text-xl font-semibold text-gray-900">Delete event?</h2>
+            <p className="mt-2 text-sm text-gray-500">
+              “{eventPendingDeletion.name}” will be removed permanently. This action
+              cannot be undone.
+            </p>
+            <div className="mt-6 flex flex-col gap-3">
+              <button
+                type="button"
+                className="w-full rounded-full bg-red-500 px-5 py-2 text-sm font-semibold text-white shadow transition hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-70"
+                onClick={handleConfirmDelete}
+                disabled={pendingDeleteId === eventPendingDeletion.id}
+              >
+                {pendingDeleteId === eventPendingDeletion.id ? "Deleting..." : "Delete"}
+              </button>
+              <button
+                type="button"
+                className="w-full rounded-full border border-transparent bg-[#fafafa] px-5 py-2 text-sm font-semibold text-gray-700 shadow-inner transition hover:bg-[#ece8ff]"
+                onClick={handleCancelDelete}
+                disabled={pendingDeleteId === eventPendingDeletion.id}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }

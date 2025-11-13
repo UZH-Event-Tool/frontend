@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL } from "@/lib/api";
-import { getAuthToken } from "@/lib/auth";
+import { getAuthToken, getTokenPayload } from "@/lib/auth";
 
 export type EventFormInitialData = {
   id: string;
@@ -13,7 +13,6 @@ export type EventFormInitialData = {
   startsAt: string;
   registrationDeadline: string;
   ownerName: string;
-  theme: string;
   category: string;
   attendanceLimit: number;
   images: string[];
@@ -27,8 +26,6 @@ type EventFormState = {
   startTime: string;
   registrationDate: string;
   registrationTime: string;
-  eventOwner: string;
-  theme: string;
   category: string;
   attendanceLimit: string;
 };
@@ -48,8 +45,6 @@ const defaultState: EventFormState = {
   startTime: "",
   registrationDate: "",
   registrationTime: "",
-  eventOwner: "",
-  theme: "",
   category: "",
   attendanceLimit: "",
 };
@@ -68,7 +63,9 @@ function toInputTime(dateIso: string) {
   return local.toISOString().slice(11, 16);
 }
 
-function buildInitialState(initialEvent?: EventFormInitialData | null): EventFormState {
+function buildInitialState(
+  initialEvent?: EventFormInitialData | null
+): EventFormState {
   if (!initialEvent) {
     return defaultState;
   }
@@ -81,22 +78,35 @@ function buildInitialState(initialEvent?: EventFormInitialData | null): EventFor
     startTime: toInputTime(initialEvent.startsAt),
     registrationDate: toInputDate(initialEvent.registrationDeadline),
     registrationTime: toInputTime(initialEvent.registrationDeadline),
-    eventOwner: initialEvent.ownerName ?? "",
-    theme: initialEvent.theme ?? "",
     category: initialEvent.category ?? "",
     attendanceLimit:
-      initialEvent.attendanceLimit != null ? String(initialEvent.attendanceLimit) : "",
+      initialEvent.attendanceLimit != null
+        ? String(initialEvent.attendanceLimit)
+        : "",
   };
 }
 
-export function EventForm({ mode, eventId, initialEvent, onSuccess }: EventFormProps) {
-  const [form, setForm] = useState<EventFormState>(buildInitialState(initialEvent));
+export function EventForm({
+  mode,
+  eventId,
+  initialEvent,
+  onSuccess,
+}: EventFormProps) {
+  const [form, setForm] = useState<EventFormState>(
+    buildInitialState(initialEvent)
+  );
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
-  const [existingImages, setExistingImages] = useState<string[]>(initialEvent?.images ?? []);
+  const [existingImages, setExistingImages] = useState<string[]>(
+    initialEvent?.images ?? []
+  );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const ownerName = useMemo(() => {
+    const payload = getTokenPayload();
+    return payload?.fullName?.trim() || payload?.universityEmail || "";
+  }, []);
 
   useEffect(() => {
     setForm(buildInitialState(initialEvent));
@@ -115,14 +125,18 @@ export function EventForm({ mode, eventId, initialEvent, onSuccess }: EventFormP
     () => () => {
       imagePreviews.forEach((url) => URL.revokeObjectURL(url));
     },
-    [imagePreviews],
+    [imagePreviews]
   );
 
   const imageCount = useMemo(() => imageFiles.length, [imageFiles]);
 
   const handleChange =
     (field: keyof EventFormState) =>
-    (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    (
+      event: React.ChangeEvent<
+        HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+      >
+    ) => {
       setForm((previous) => ({ ...previous, [field]: event.target.value }));
     };
 
@@ -136,10 +150,12 @@ export function EventForm({ mode, eventId, initialEvent, onSuccess }: EventFormP
     }
   };
 
-  const handleImageSelection: React.ChangeEventHandler<HTMLInputElement> = (event) => {
+  const handleImageSelection: React.ChangeEventHandler<HTMLInputElement> = (
+    event
+  ) => {
     const files = Array.from(event.target.files ?? []);
     const validImages = files.filter((file) =>
-      ["image/png", "image/jpeg"].includes(file.type),
+      ["image/png", "image/jpeg"].includes(file.type)
     );
 
     if (!validImages.length) {
@@ -192,12 +208,9 @@ export function EventForm({ mode, eventId, initialEvent, onSuccess }: EventFormP
     }
 
     const registrationDeadline = new Date(
-      `${form.registrationDate}T${form.registrationTime}`,
+      `${form.registrationDate}T${form.registrationTime}`
     );
-    if (
-      !registrationDeadline ||
-      Number.isNaN(registrationDeadline.getTime())
-    ) {
+    if (!registrationDeadline || Number.isNaN(registrationDeadline.getTime())) {
       setError("Please provide a valid registration deadline.");
       return;
     }
@@ -211,19 +224,9 @@ export function EventForm({ mode, eventId, initialEvent, onSuccess }: EventFormP
       return;
     }
 
-    if (!form.eventOwner.trim() && mode === "create") {
-      setError("Please specify who is hosting this event.");
-      return;
-    }
-
     const attendanceLimit = Number.parseInt(form.attendanceLimit, 10);
     if (!Number.isInteger(attendanceLimit) || attendanceLimit <= 0) {
       setError("Attendance limit must be a positive whole number.");
-      return;
-    }
-
-    if (mode === "create" && !imageFiles.length) {
-      setError("Please upload at least one event picture.");
       return;
     }
 
@@ -235,9 +238,9 @@ export function EventForm({ mode, eventId, initialEvent, onSuccess }: EventFormP
       formData.set("location", form.location.trim());
       formData.set("time", parsedTime.toISOString());
       if (mode === "create") {
-        formData.set("eventOwner", form.eventOwner.trim());
+        const derivedOwnerName = ownerName || "Event host";
+        formData.set("eventOwner", derivedOwnerName);
       }
-      formData.set("theme", form.theme.trim());
       formData.set("category", form.category.trim());
       formData.set("attendanceLimit", attendanceLimit.toString());
       formData.set("registrationDeadline", registrationDeadline.toISOString());
@@ -260,7 +263,8 @@ export function EventForm({ mode, eventId, initialEvent, onSuccess }: EventFormP
       if (!response.ok) {
         const message =
           payload && typeof payload === "object" && "message" in payload
-            ? (payload as { message?: string }).message ?? "Unable to save the event."
+            ? (payload as { message?: string }).message ??
+              "Unable to save the event."
             : "Unable to save the event.";
         throw new Error(message);
       }
@@ -268,8 +272,8 @@ export function EventForm({ mode, eventId, initialEvent, onSuccess }: EventFormP
       if (mode === "create") {
         resetForm();
       } else {
-        const updatedImages =
-          (payload as { event?: { images?: string[] } })?.event?.images;
+        const updatedImages = (payload as { event?: { images?: string[] } })
+          ?.event?.images;
         if (updatedImages?.length) {
           setExistingImages(updatedImages);
         }
@@ -277,7 +281,7 @@ export function EventForm({ mode, eventId, initialEvent, onSuccess }: EventFormP
 
       onSuccess?.(
         (payload as { event?: { id?: string } })?.event?.id ??
-          (mode === "edit" ? eventId : undefined),
+          (mode === "edit" ? eventId : undefined)
       );
     } catch (err) {
       const message =
@@ -389,33 +393,6 @@ export function EventForm({ mode, eventId, initialEvent, onSuccess }: EventFormP
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="flex flex-col gap-2 text-sm text-gray-600">
-            <span className="font-medium text-gray-900">event owner</span>
-            <input
-              name="eventOwner"
-              type="text"
-              className="rounded-full border border-transparent bg-[#fafafa] px-4 py-3 text-sm text-gray-900 shadow-inner outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200"
-              placeholder="UZH Social Club"
-              value={form.eventOwner}
-              onChange={handleChange("eventOwner")}
-              disabled={mode === "edit"}
-              required={mode === "create"}
-            />
-          </label>
-          <label className="flex flex-col gap-2 text-sm text-gray-600">
-            <span className="font-medium text-gray-900">Event theme</span>
-            <input
-              name="theme"
-              type="text"
-              className="rounded-full border border-transparent bg-[#fafafa] px-4 py-3 text-sm text-gray-900 shadow-inner outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200"
-              placeholder="Welcome Week"
-              value={form.theme}
-              onChange={handleChange("theme")}
-              required
-            />
-          </label>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="flex flex-col gap-2 text-sm text-gray-600">
             <span className="font-medium text-gray-900">Category</span>
             <select
               name="category"
@@ -455,10 +432,13 @@ export function EventForm({ mode, eventId, initialEvent, onSuccess }: EventFormP
       <fieldset className="space-y-3">
         <div className="flex flex-col gap-1">
           <span className="text-sm font-medium text-gray-900">
-            Event Pictures ({mode === "edit" ? imageCount || existingImages.length : imageCount})
+            Event Pictures (
+            {mode === "edit" ? imageCount || existingImages.length : imageCount}
+            )
           </span>
           <p className="text-xs text-gray-500">
-            Upload PNG or JPEG images. They will appear on the event card.
+            Upload PNG or JPEG images (optional). They will appear on the event
+            card.
             {mode === "edit"
               ? " Uploading new images will replace the current gallery."
               : ""}
@@ -528,14 +508,18 @@ export function EventForm({ mode, eventId, initialEvent, onSuccess }: EventFormP
               >
                 <span className="inline-flex h-10 w-10 overflow-hidden rounded-xl bg-[#f4f6ff]">
                   <Image
-                    src={image.startsWith("/") ? `${API_BASE_URL}${image}` : image}
+                    src={
+                      image.startsWith("/") ? `${API_BASE_URL}${image}` : image
+                    }
                     alt="Existing event image"
                     width={40}
                     height={40}
                     className="h-full w-full object-cover"
                   />
                 </span>
-                <div className="max-w-[120px] truncate">{image.split("/").pop()}</div>
+                <div className="max-w-[120px] truncate">
+                  {image.split("/").pop()}
+                </div>
               </div>
             ))}
           </div>
@@ -561,8 +545,8 @@ export function EventForm({ mode, eventId, initialEvent, onSuccess }: EventFormP
               ? "Saving..."
               : "Creating..."
             : mode === "edit"
-              ? "Save changes"
-              : "Create Event"}
+            ? "Save changes"
+            : "Create Event"}
         </button>
       </div>
     </form>

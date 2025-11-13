@@ -13,7 +13,6 @@ const mockEvent = {
   endsAt: "2025-10-21T21:00:00Z",
   slotsTotal: 50,
   slotsTaken: 38,
-  theme: "Networking",
   organizer: {
     name: "Lara Meier",
     email: "lara.meier@uzh.ch",
@@ -49,7 +48,7 @@ export default function EventDetailPage() {
           {mockEvent.name}
         </h1>
         <p className="text-sm text-gray-500">
-          Organized by {mockEvent.organizer.name} · {mockEvent.theme}
+          Organized by {mockEvent.organizer.name} ·
         </p>
       </header>
 

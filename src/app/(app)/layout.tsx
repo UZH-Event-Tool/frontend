@@ -219,7 +219,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-[#fafafa] text-gray-900">
-      <aside className="hidden w-[260px] flex-col justify-between border-r border-transparent bg-white/90 px-6 py-8 shadow-[8px_0_40px_rgba(90,84,255,0.12)] backdrop-blur-xl lg:flex">
+      <aside className="hidden w-[260px] flex-col justify-between border-r border-transparent bg-white/90 px-6 py-8 shadow-[8px_0_40px_rgba(90,84,255,0.12)] backdrop-blur-xl lg:flex lg:sticky lg:top-0 lg:h-screen">
         <div className="space-y-10">
           <div>
             <Link href="/dashboard" className="flex items-center gap-3">
