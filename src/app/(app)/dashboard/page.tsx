@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { API_BASE_URL, fetchJson } from "@/lib/api";
 import { getAuthToken, getTokenPayload } from "@/lib/auth";
 
@@ -12,15 +12,16 @@ type Event = {
   description: string;
   location: string;
   startsAt: string;
-  images?: string[];
+  images: string[];
   category: string;
   ownerId: string;
+  ownerName: string;
   attendanceLimit: number;
   registrationDeadline: string;
+  registrationCount: number;
+  isRegistered: boolean;
   createdAt: string;
   updatedAt: string;
-  attendeesCount?: number;
-  isRegistered?: boolean;
 };
 
 const FALLBACK_GRADIENT =
@@ -54,14 +55,11 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [registrationCounts, setRegistrationCounts] = useState<
-    Record<string, number>
-  >({});
-  const [registeredEvents, setRegisteredEvents] = useState<
-    Record<string, boolean>
-  >({});
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [pendingRegisterId, setPendingRegisterId] = useState<string | null>(null);
+  const [pendingUnregisterId, setPendingUnregisterId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [eventPendingDeletion, setEventPendingDeletion] = useState<Event | null>(
     null,
   );
@@ -73,15 +71,23 @@ export default function DashboardPage() {
     }
   }, []);
 
-  useEffect(() => {
-    async function loadEvents() {
-      setIsLoading(true);
-      setError(null);
-      const token = getAuthToken();
+  const fetchEvents = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent === true;
+      if (!silent) {
+        setIsLoading(true);
+        setError(null);
+      }
 
+      const token = getAuthToken();
       if (!token) {
-        setError("You need to sign in again to view events.");
-        setIsLoading(false);
+        const message = "You need to sign in again to view events.";
+        if (silent) {
+          setActionError(message);
+        } else {
+          setError(message);
+          setIsLoading(false);
+        }
         return;
       }
 
@@ -92,27 +98,26 @@ export default function DashboardPage() {
           },
         });
         setEvents(data.events);
-        const counts: Record<string, number> = {};
-        const registrations: Record<string, boolean> = {};
-        data.events.forEach((event) => {
-          counts[event.id] = event.attendeesCount ?? 0;
-          if (event.isRegistered) {
-            registrations[event.id] = true;
-          }
-        });
-        setRegistrationCounts(counts);
-        setRegisteredEvents(registrations);
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Unable to load events.";
-        setError(message);
+        if (silent) {
+          setActionError(message);
+        } else {
+          setError(message);
+        }
       } finally {
-        setIsLoading(false);
+        if (!silent) {
+          setIsLoading(false);
+        }
       }
-    }
+    },
+    [],
+  );
 
-    void loadEvents();
-  }, []);
+  useEffect(() => {
+    void fetchEvents();
+  }, [fetchEvents]);
 
   const categories = useMemo(() => {
     const unique = new Set(
@@ -150,35 +155,139 @@ export default function DashboardPage() {
   const showEmptyState =
     !isLoading && !error && events.length > 0 && filteredEvents.length === 0;
 
-  const handleToggleRegistration = (event: Event) => {
-    setActionError(null);
-    const isRegistered = Boolean(registeredEvents[event.id]);
-    const filled = registrationCounts[event.id] ?? 0;
-    const hasLimit = (event.attendanceLimit ?? 0) > 0;
-
-    if (!isRegistered && hasLimit && filled >= event.attendanceLimit) {
-      setActionError("This event is already full.");
+const handleRegisterEvent = async (event: Event) => {
+    if (event.isRegistered) {
       return;
     }
 
-    setRegisteredEvents((prev) => {
-      const next = { ...prev };
-      if (isRegistered) {
-        delete next[event.id];
-      } else {
-        next[event.id] = true;
-      }
-      return next;
-    });
+    const isFull = event.attendanceLimit > 0 && event.registrationCount >= event.attendanceLimit;
+    const registrationDeadlinePassed =
+      new Date(event.registrationDeadline).getTime() <= Date.now();
 
-    setRegistrationCounts((counts) => {
-      const current = counts[event.id] ?? 0;
-      if (isRegistered) {
-        return { ...counts, [event.id]: Math.max(current - 1, 0) };
+    if (isFull || registrationDeadlinePassed) {
+      setActionError(
+        isFull ? "This event is already full." : "Registration deadline has passed.",
+      );
+      return;
+    }
+
+    const token = getAuthToken();
+    if (!token) {
+      setActionError("You need to sign in again to register for events.");
+      return;
+    }
+
+    setActionError(null);
+    setActionSuccess(null);
+    setPendingRegisterId(event.id);
+    try {
+      const response = await fetch(`${API_BASE_URL}/events/${event.id}/register`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        const message =
+          payload && typeof payload === "object" && "message" in payload
+            ? (payload as { message?: string }).message ??
+              "Unable to register for this event."
+            : "Unable to register for this event.";
+        throw new Error(message);
       }
-      return { ...counts, [event.id]: current + 1 };
-    });
-  };
+
+      const registrationCount =
+        (payload as { registrationCount?: number })?.registrationCount ??
+        event.registrationCount + 1;
+
+      setEvents((prev) =>
+        prev.map((item) =>
+          item.id === event.id
+            ? {
+                ...item,
+                registrationCount,
+                isRegistered: true,
+              }
+            : item,
+        ),
+      );
+      setActionSuccess("You're registered for this event.");
+      await fetchEvents({ silent: true });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Unable to register for this event.";
+      setActionError(message);
+    } finally {
+      setPendingRegisterId(null);
+  }
+};
+
+const handleUnregisterEvent = async (event: Event) => {
+  const registrationDeadlinePassed =
+    new Date(event.registrationDeadline).getTime() <= Date.now();
+
+  if (registrationDeadlinePassed) {
+    setActionError("Registration deadline has passed.");
+    return;
+  }
+
+  const token = getAuthToken();
+  if (!token) {
+    setActionError("You need to sign in again to update registrations.");
+    return;
+  }
+
+  setActionError(null);
+  setActionSuccess(null);
+  setPendingUnregisterId(event.id);
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/events/${event.id}/unregister`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    );
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && "message" in payload
+          ? (payload as { message?: string }).message ??
+            "Unable to unregister from this event."
+          : "Unable to unregister from this event.";
+      throw new Error(message);
+    }
+
+    const registrationCount =
+      (payload as { registrationCount?: number })?.registrationCount ??
+      Math.max(event.registrationCount - 1, 0);
+
+    setEvents((prev) =>
+      prev.map((item) =>
+        item.id === event.id
+          ? {
+              ...item,
+              registrationCount,
+              isRegistered: false,
+            }
+          : item,
+      ),
+    );
+    setActionSuccess("You have been removed from this event.");
+    await fetchEvents({ silent: true });
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Unable to unregister from this event.";
+    setActionError(message);
+  } finally {
+    setPendingUnregisterId(null);
+  }
+};
 
   const handleDeleteEvent = async (event: Event) => {
     setActionError(null);
@@ -323,6 +432,11 @@ export default function DashboardPage() {
           {actionError}
         </div>
       ) : null}
+      {actionSuccess ? (
+        <div className="rounded-2xl bg-green-50 px-4 py-3 text-sm text-green-700 shadow-[0_18px_45px_rgba(90,84,255,0.08)]">
+          {actionSuccess}
+        </div>
+      ) : null}
 
       {isLoading ? (
         <section className="grid gap-6 lg:grid-cols-3">
@@ -370,132 +484,162 @@ export default function DashboardPage() {
               const isDataImage =
                 typeof resolvedCoverImage === "string" &&
                 resolvedCoverImage.startsWith("data:");
-              const filled = registrationCounts[event.id] ?? 0;
-              const hasLimit = (event.attendanceLimit ?? 0) > 0;
+              const filled = event.registrationCount ?? 0;
+              const hasLimit = event.attendanceLimit > 0;
               const spotsLeft = hasLimit
                 ? Math.max(event.attendanceLimit - filled, 0)
                 : null;
               const isFull = hasLimit && spotsLeft === 0;
               const isOwner =
                 currentUserId != null && currentUserId === event.ownerId;
-              const isRegistered = Boolean(registeredEvents[event.id]);
+              const isRegistered = event.isRegistered;
+              const registrationDeadlinePassed =
+                new Date(event.registrationDeadline).getTime() <= Date.now();
               const occupancyLabel = hasLimit
-                ? `${filled} / ${event.attendanceLimit} spots filled (${spotsLeft} left)`
+                ? isFull
+                  ? `${filled} / ${event.attendanceLimit} spots filled`
+                  : `${filled} / ${event.attendanceLimit} spots filled (${spotsLeft} left)`
                 : `${filled} attendee${filled === 1 ? "" : "s"}`;
+              const registerDisabled =
+                isRegistered || isFull || registrationDeadlinePassed;
+              const registerLabel = isRegistered
+                ? "Registered"
+                : isFull
+                  ? "Event Full"
+                  : registrationDeadlinePassed
+                    ? "Registration Closed"
+                    : "Register";
+              const registerButtonClass = (() => {
+                if (isRegistered) {
+                  return "bg-gray-100 text-gray-700";
+                }
+                if (isFull) {
+                  return "bg-gradient-to-r from-[#c7c5ff] to-[#a9a7ff] text-white shadow-[0_8px_20px_rgba(90,84,255,0.25)]";
+                }
+                if (registrationDeadlinePassed) {
+                  return "cursor-not-allowed bg-gray-200 text-gray-500";
+                }
+                return "bg-gradient-to-r from-[#5a54ff] to-[#6f6aff] text-white shadow-[0_12px_30px_rgba(90,84,255,0.28)] hover:shadow-[0_16px_34px_rgba(90,84,255,0.35)]";
+              })();
 
               return (
                 <article
                   key={event.id}
                   className="flex h-full flex-col overflow-hidden rounded-[32px] border border-transparent bg-white shadow-[0_22px_55px_rgba(90,84,255,0.14)] transition hover:-translate-y-1 hover:shadow-[0_30px_70px_rgba(90,84,255,0.18)]"
                 >
-                  <div className="relative h-44 w-full overflow-hidden">
-                    {resolvedCoverImage ? (
-                      <Image
-                        src={resolvedCoverImage}
-                        alt={event.name}
-                        fill
-                        className="object-cover"
-                        sizes="(max-width: 1024px) 100vw, 33vw"
-                        unoptimized={isDataImage}
-                      />
-                    ) : (
-                      <div
-                        className={`flex h-full w-full items-center justify-center text-sm text-white/80 ${FALLBACK_GRADIENT}`}
-                      >
-                        Image coming soon
-                      </div>
-                    )}
-                    <span className="absolute right-4 top-4 rounded-full bg-white/95 px-3 py-1 text-xs font-semibold text-gray-800 shadow">
-                      {event.category}
-                    </span>
-                  </div>
-
-                  <div className="flex flex-1 flex-col gap-4 p-6">
-                    <div className="space-y-1">
-                      <h2 className="text-xl font-semibold text-gray-900">
-                        {event.name}
-                      </h2>
-                      <p className="line-clamp-2 text-sm text-gray-500">
-                        {event.description}
-                      </p>
+                  <Link
+                    href={`/events/${event.id}`}
+                    className="flex flex-1 flex-col"
+                  >
+                    <div className="relative h-44 w-full overflow-hidden">
+                      {resolvedCoverImage ? (
+                        <Image
+                          src={resolvedCoverImage}
+                          alt={event.name}
+                          fill
+                          className="object-cover"
+                          sizes="(max-width: 1024px) 100vw, 33vw"
+                          unoptimized={isDataImage}
+                        />
+                      ) : (
+                        <div
+                          className={`flex h-full w-full items-center justify-center text-sm text-white/80 ${FALLBACK_GRADIENT}`}
+                        >
+                          Image coming soon
+                        </div>
+                      )}
+                      <span className="absolute right-4 top-4 rounded-full bg-white/95 px-3 py-1 text-xs font-semibold text-gray-800 shadow">
+                        {event.category}
+                      </span>
                     </div>
 
-                    <div className="space-y-2 text-sm text-gray-600">
-                      <div className="flex items-center gap-2">
-                        <svg
-                          aria-hidden="true"
-                          viewBox="0 0 24 24"
-                          className="h-4 w-4 text-indigo-500"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth={1.5}
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"
-                          />
-                        </svg>
-                        <span>{formatDateTime(event.startsAt)}</span>
+                    <div className="flex flex-1 flex-col gap-4 p-6 text-left">
+                      <div className="space-y-1">
+                        <h2 className="text-xl font-semibold text-gray-900">
+                          {event.name}
+                        </h2>
+                        <p className="line-clamp-2 text-sm text-gray-500">
+                          {event.description}
+                        </p>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <svg
-                          aria-hidden="true"
-                          viewBox="0 0 24 24"
-                          className="h-4 w-4 text-indigo-500"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth={1.5}
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M12 11.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Z"
-                          />
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 0 1 15 0Z"
-                          />
-                        </svg>
-                        <span>{event.location}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <svg
-                          aria-hidden="true"
-                          viewBox="0 0 24 24"
-                          className="h-4 w-4 text-indigo-500"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth={1.5}
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 0c4.142 0 7.5 2.015 7.5 4.5S16.142 21 12 21s-7.5-2.015-7.5-4.5S7.858 12 12 12Z"
-                          />
-                        </svg>
-                        <span>{event.ownerName}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <svg
-                          aria-hidden="true"
-                          viewBox="0 0 24 24"
-                          className="h-4 w-4 text-indigo-500"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth={1.5}
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M7 8h10m-9 4h8m-7 4h6"
-                          />
-                        </svg>
-                        <span>{occupancyLabel}</span>
+
+                      <div className="space-y-2 text-sm text-gray-600">
+                        <div className="flex items-center gap-2">
+                          <svg
+                            aria-hidden="true"
+                            viewBox="0 0 24 24"
+                            className="h-4 w-4 text-indigo-500"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={1.5}
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"
+                            />
+                          </svg>
+                          <span>{formatDateTime(event.startsAt)}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <svg
+                            aria-hidden="true"
+                            viewBox="0 0 24 24"
+                            className="h-4 w-4 text-indigo-500"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={1.5}
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M12 11.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Z"
+                            />
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 0 1 15 0Z"
+                            />
+                          </svg>
+                          <span>{event.location}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <svg
+                            aria-hidden="true"
+                            viewBox="0 0 24 24"
+                            className="h-4 w-4 text-indigo-500"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={1.5}
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 0c4.142 0 7.5 2.015 7.5 4.5S16.142 21 12 21s-7.5-2.015-7.5-4.5S7.858 12 12 12Z"
+                            />
+                          </svg>
+                          <span>{event.ownerName}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <svg
+                            aria-hidden="true"
+                            viewBox="0 0 24 24"
+                            className="h-4 w-4 text-indigo-500"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={1.5}
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M7 8h10m-9 4h8m-7 4h6"
+                            />
+                          </svg>
+                          <span>{occupancyLabel}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  </Link>
 
                   <div className="flex items-center gap-3 border-t border-gray-100 px-6 py-5">
                     {isOwner ? (
@@ -517,24 +661,32 @@ export default function DashboardPage() {
                             : "Delete"}
                         </button>
                       </>
+                    ) : isRegistered ? (
+                      <button
+                        type="button"
+                        onClick={() => handleUnregisterEvent(event)}
+                        disabled={
+                          registrationDeadlinePassed ||
+                          pendingUnregisterId === event.id
+                        }
+                        className={`w-full rounded-full px-5 py-2 text-sm font-semibold transition ${
+                          registrationDeadlinePassed
+                            ? "cursor-not-allowed bg-gray-200 text-gray-500"
+                            : "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                        }`}
+                      >
+                        {pendingUnregisterId === event.id
+                          ? "Unregistering..."
+                          : "Unregister"}
+                      </button>
                     ) : (
                       <button
                         type="button"
-                        onClick={() => handleToggleRegistration(event)}
-                        disabled={isFull && !isRegistered}
-                        className={`w-full rounded-full px-5 py-2 text-sm font-semibold transition ${
-                          isRegistered
-                            ? "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                            : isFull
-                            ? "cursor-not-allowed bg-gray-200 text-gray-500"
-                            : "bg-gradient-to-r from-[#5a54ff] to-[#6f6aff] text-white shadow-[0_12px_30px_rgba(90,84,255,0.28)] hover:shadow-[0_16px_34px_rgba(90,84,255,0.35)]"
-                        }`}
+                        onClick={() => handleRegisterEvent(event)}
+                        disabled={registerDisabled || pendingRegisterId === event.id}
+                        className={`w-full rounded-full px-5 py-2 text-sm font-semibold transition ${registerButtonClass}`}
                       >
-                        {isRegistered
-                          ? "Deregister"
-                          : isFull
-                          ? "Full"
-                          : "Register"}
+                        {pendingRegisterId === event.id ? "Registering..." : registerLabel}
                       </button>
                     )}
                   </div>

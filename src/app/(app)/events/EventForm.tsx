@@ -103,7 +103,7 @@ export function EventForm({
     initialEvent?.images ?? []
   );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const ownerName = useMemo(() => {
+  const currentOwnerName = useMemo(() => {
     const payload = getTokenPayload();
     return payload?.fullName?.trim() || payload?.universityEmail || "";
   }, []);
@@ -237,10 +237,11 @@ export function EventForm({
       formData.set("description", form.description.trim());
       formData.set("location", form.location.trim());
       formData.set("time", parsedTime.toISOString());
-      if (mode === "create") {
-        const derivedOwnerName = ownerName || "Event host";
-        formData.set("eventOwner", derivedOwnerName);
-      }
+      const derivedOwnerName =
+        currentOwnerName ||
+        initialEvent?.ownerName ||
+        "Event host";
+      formData.set("eventOwner", derivedOwnerName);
       formData.set("category", form.category.trim());
       formData.set("attendanceLimit", attendanceLimit.toString());
       formData.set("registrationDeadline", registrationDeadline.toISOString());

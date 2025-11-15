@@ -59,6 +59,10 @@ export function RegisterForm() {
     }
 
     const trimmedUniversityEmail = universityEmail.trim();
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
     if (!trimmedUniversityEmail) {
       setError("University email is required.");
       return;
@@ -73,7 +77,9 @@ export function RegisterForm() {
       formData.set("location", location.trim());
       formData.set("fieldOfStudies", fieldOfStudies.trim());
       formData.set("universityEmail", trimmedUniversityEmail);
-      interests.forEach((interest) => formData.append("interests", interest));
+      if (interests.length) {
+        interests.forEach((interest) => formData.append("interests[]", interest));
+      }
       if (profileImage) {
         formData.append("profileImage", profileImage);
       }
@@ -86,11 +92,28 @@ export function RegisterForm() {
       const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        const message =
+        const apiMessage =
           data && typeof data === "object" && "message" in data
-            ? (data as { message?: string }).message ??
-              "Unable to create your account."
-            : "Unable to create your account.";
+            ? (data as { message?: string }).message
+            : null;
+        const fieldErrors =
+          data &&
+          typeof data === "object" &&
+          "issues" in data &&
+          data.issues &&
+          typeof data.issues === "object" &&
+          "fieldErrors" in data.issues
+            ? (data.issues.fieldErrors as Record<string, string[]>)
+            : null;
+
+        const passwordError = fieldErrors?.password?.[0];
+        const interestsError = fieldErrors?.interests?.[0];
+
+        const message =
+          passwordError ||
+          interestsError ||
+          apiMessage ||
+          "Unable to create your account.";
         throw new Error(message);
       }
 

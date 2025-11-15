@@ -23,6 +23,22 @@ type Profile = {
   updatedAt: string;
 };
 
+type EventSummary = {
+  id: string;
+  name: string;
+  description: string;
+  location: string;
+  startsAt: string;
+  category: string;
+  ownerId: string;
+  ownerName: string;
+  attendanceLimit: number;
+  registrationCount: number;
+  registrationDeadline: string;
+  isRegistered: boolean;
+  images: string[];
+};
+
 type FormState = {
   firstName: string;
   lastName: string;
@@ -59,6 +75,13 @@ function buildImageUrl(pathname: string | null) {
   return `${API_BASE_URL}${pathname}`;
 }
 
+function formatEventDateTime(dateIso: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(dateIso));
+}
+
 export function ProfileClient() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [form, setForm] = useState<FormState>(formDefaults);
@@ -71,8 +94,16 @@ export function ProfileClient() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"created" | "attending" | "history">(
-    "created",
+    "attending",
   );
+  const [eventsLoading, setEventsLoading] = useState(true);
+  const [eventsError, setEventsError] = useState<string | null>(null);
+  const [events, setEvents] = useState<EventSummary[]>([]);
+  const [eventActionError, setEventActionError] = useState<string | null>(null);
+  const [eventActionSuccess, setEventActionSuccess] = useState<string | null>(null);
+  const [pendingRegisterId, setPendingRegisterId] = useState<string | null>(null);
+  const [pendingUnregisterId, setPendingUnregisterId] = useState<string | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -140,6 +171,43 @@ export function ProfileClient() {
 
     fetchProfile();
   }, [populateForm]);
+
+  const fetchEvents = useCallback(async () => {
+    setEventsLoading(true);
+    setEventsError(null);
+    try {
+      const token = getAuthToken();
+      if (!token) {
+        setEventsError("You need to sign in to view your events.");
+        setEventsLoading(false);
+        return;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/events`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.message ?? "Failed to load events.");
+      }
+
+      setEvents(payload.events as EventSummary[]);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to load events.";
+      setEventsError(message);
+    } finally {
+      setEventsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchEvents();
+  }, [fetchEvents]);
 
   const currentImage = useMemo(() => {
     if (previewUrl) {
@@ -280,6 +348,44 @@ export function ProfileClient() {
     };
   }, [isEditing]);
 
+  const profileId = profile?.id ?? "";
+  const upcomingEvents = useMemo(() => {
+    const nowTime = Date.now();
+    return events
+      .filter(
+        (event) =>
+          event.isRegistered &&
+          new Date(event.startsAt).getTime() > nowTime,
+      )
+      .sort(
+        (a, b) =>
+          new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+      );
+  }, [events]);
+
+  const pastEvents = useMemo(() => {
+    const nowTime = Date.now();
+    return events
+      .filter(
+        (event) =>
+          event.isRegistered &&
+          new Date(event.startsAt).getTime() <= nowTime,
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.startsAt).getTime() - new Date(a.startsAt).getTime(),
+      );
+  }, [events]);
+
+  const myEvents = useMemo(() => {
+    return events
+      .filter((event) => event.ownerId === profileId)
+      .sort(
+        (a, b) =>
+          new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+      );
+  }, [events, profileId]);
+
   if (isLoading) {
     return (
       <div className="rounded-3xl border border-transparent bg-white/90 p-10 text-center shadow-[0_20px_50px_rgba(90,84,255,0.12)]">
@@ -328,34 +434,41 @@ export function ProfileClient() {
         profile.universityEmail ?? "University email not provided",
     },
   ];
+
   const tabItems = [
     {
-      id: "created" as const,
-      label: "Created",
-      emptyTitle: "No events created yet",
-      emptyDescription: "Share your first event with the campus community.",
-      ctaHref: "/events/new",
-      ctaLabel: "Create Your First Event",
-    },
-    {
       id: "attending" as const,
-      label: "Attending",
-      emptyTitle: "You are not attending any events yet",
+      label: `Upcoming Events (${upcomingEvents.length})`,
+      emptyTitle: "No upcoming events",
       emptyDescription: "Discover events that align with your interests.",
       ctaHref: "/dashboard",
       ctaLabel: "Browse Events",
     },
     {
       id: "history" as const,
-      label: "History",
+      label: `Past Events (${pastEvents.length})`,
       emptyTitle: "No past events yet",
       emptyDescription: "Once you attend events, you will see them here.",
       ctaHref: "/dashboard",
       ctaLabel: "Discover More Events",
     },
+    {
+      id: "created" as const,
+      label: `My Events (${myEvents.length})`,
+      emptyTitle: "No events created yet",
+      emptyDescription: "Share your first event with the campus community.",
+      ctaHref: "/events/new",
+      ctaLabel: "Create Your First Event",
+    },
   ];
   const activeTabConfig =
     tabItems.find((tab) => tab.id === activeTab) ?? tabItems[0];
+  const eventsByTab: Record<"attending" | "history" | "created", EventSummary[]> = {
+    attending: upcomingEvents,
+    history: pastEvents,
+    created: myEvents,
+  };
+  const eventsForActiveTab = eventsByTab[activeTab] ?? [];
 
   return (
     <div className="space-y-8">
@@ -444,8 +557,8 @@ export function ProfileClient() {
       </section>
 
       <section className="rounded-[34px] border border-transparent bg-white/95 p-6 shadow-[0_25px_70px_rgba(90,84,255,0.08)]">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">
-          <div className="flex justify-center">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
+          <div className="flex flex-col items-center gap-4">
             <div className="flex gap-2 rounded-full bg-[#eef0ff] p-1">
               {tabItems.map((tab) => {
                 const isActive = tab.id === activeTab;
@@ -465,24 +578,146 @@ export function ProfileClient() {
                 );
               })}
             </div>
+            {eventsError ? (
+              <p className="text-sm text-red-500">{eventsError}</p>
+            ) : null}
+            {eventActionError ? (
+              <p className="text-xs text-red-500">{eventActionError}</p>
+            ) : null}
+            {eventActionSuccess ? (
+              <p className="text-xs text-green-600">{eventActionSuccess}</p>
+            ) : null}
           </div>
-          <div className="flex flex-col items-center gap-4 rounded-3xl border border-dashed border-indigo-100 bg-white/80 px-8 py-16 text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-indigo-50 text-3xl text-indigo-400">
-              📅
+          {eventsLoading ? (
+            <div className="grid gap-4 md:grid-cols-2">
+              {Array.from({ length: 2 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="h-48 animate-pulse rounded-3xl bg-gradient-to-br from-[#f0f0ff] to-[#fafaff]"
+                />
+              ))}
             </div>
-            <h3 className="text-lg font-semibold text-gray-700">
-              {activeTabConfig.emptyTitle}
-            </h3>
-            <p className="max-w-md text-sm text-gray-500">
-              {activeTabConfig.emptyDescription}
-            </p>
-            <Link
-              href={activeTabConfig.ctaHref}
-              className="rounded-full bg-indigo-500 px-5 py-2 text-sm font-semibold text-white shadow transition hover:bg-indigo-600"
-            >
-              {activeTabConfig.ctaLabel}
-            </Link>
-          </div>
+          ) : eventsForActiveTab.length === 0 ? (
+            <div className="flex flex-col items-center gap-4 rounded-3xl border border-dashed border-indigo-100 bg-white/80 px-8 py-16 text-center">
+              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-indigo-50 text-3xl text-indigo-400">
+                📅
+              </div>
+              <h3 className="text-lg font-semibold text-gray-700">
+                {activeTabConfig.emptyTitle}
+              </h3>
+              <p className="max-w-md text-sm text-gray-500">
+                {activeTabConfig.emptyDescription}
+              </p>
+              <Link
+                href={activeTabConfig.ctaHref}
+                className="rounded-full bg-indigo-500 px-5 py-2 text-sm font-semibold text-white shadow transition hover:bg-indigo-600"
+              >
+                {activeTabConfig.ctaLabel}
+              </Link>
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2">
+              {eventsForActiveTab.map((event) => {
+                const imageUrl = event.images[0]
+                  ? event.images[0].startsWith("/")
+                    ? `${API_BASE_URL}${event.images[0]}`
+                    : event.images[0]
+                  : null;
+                const formattedDate = formatEventDateTime(event.startsAt);
+                const isFull =
+                  event.attendanceLimit > 0 &&
+                  event.registrationCount >= event.attendanceLimit;
+                const registrationDeadlinePassed =
+                  new Date(event.registrationDeadline).getTime() <= Date.now();
+
+                const actionArea =
+                  activeTab === "attending" ? (
+                    <button
+                      type="button"
+                      onClick={() => handleUnregisterEvent(event)}
+                      disabled={
+                        registrationDeadlinePassed ||
+                        pendingUnregisterId === event.id
+                      }
+                      className={`w-full rounded-full bg-gradient-to-r from-[#c7c5ff] to-[#a9a7ff] px-4 py-2 text-sm font-semibold text-white shadow transition ${
+                        registrationDeadlinePassed
+                          ? "cursor-not-allowed opacity-60"
+                          : "hover:shadow-[0_12px_30px_rgba(90,84,255,0.3)]"
+                      }`}
+                    >
+                      {pendingUnregisterId === event.id
+                        ? "Unregistering..."
+                        : registrationDeadlinePassed
+                          ? "Registration Closed"
+                          : "Unregister"}
+                    </button>
+                  ) : activeTab === "created" ? (
+                    <div className="flex gap-2">
+                      <Link
+                        href={`/events/${event.id}/edit`}
+                        className="flex-1 rounded-full border border-gray-200 px-4 py-2 text-center text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
+                      >
+                        Edit
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteEvent(event)}
+                        className="flex-1 rounded-full bg-red-500 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-70"
+                        disabled={pendingDeleteId === event.id}
+                      >
+                        {pendingDeleteId === event.id ? "Deleting..." : "Delete"}
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-500">
+                      Attended on {formatEventDateTime(event.startsAt)}
+                    </p>
+                  );
+
+                return (
+                  <article
+                    key={event.id}
+                    className="flex h-full flex-col overflow-hidden rounded-[28px] border border-transparent bg-white shadow-[0_18px_45px_rgba(90,84,255,0.08)]"
+                  >
+                    <Link href={`/events/${event.id}`} className="flex flex-1 flex-col">
+                      <div className="relative h-40 w-full overflow-hidden">
+                        {imageUrl ? (
+                          <Image
+                            src={imageUrl}
+                            alt={event.name}
+                            fill
+                            className="object-cover"
+                            sizes="(max-width: 768px) 100vw, 50vw"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center bg-indigo-50 text-sm text-indigo-400">
+                            Image coming soon
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex flex-1 flex-col gap-2 p-4 text-left">
+                        <h3 className="text-lg font-semibold text-gray-900">
+                          {event.name}
+                        </h3>
+                        <p className="line-clamp-2 text-sm text-gray-500">
+                          {event.description}
+                        </p>
+                        <div className="text-xs text-gray-500">
+                          <div>{formattedDate}</div>
+                          <div>{event.location}</div>
+                          <div>
+                            {event.registrationCount} / {event.attendanceLimit} filled
+                            {isFull ? " · Full" : ""}
+                          </div>
+                        </div>
+                      </div>
+                    </Link>
+                    <div className="border-t border-gray-100 px-4 py-3">{actionArea}</div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </div>
       </section>
 
@@ -688,3 +923,188 @@ export function ProfileClient() {
     </div>
   );
 }
+  const refreshEventsSilently = async () => {
+    try {
+      await fetchEvents();
+    } catch {
+      // errors handled in fetchEvents
+    }
+  };
+
+  const handleRegisterEvent = async (event: EventSummary) => {
+    const isFull =
+      event.attendanceLimit > 0 && event.registrationCount >= event.attendanceLimit;
+    const registrationDeadlinePassed =
+      new Date(event.registrationDeadline).getTime() <= Date.now();
+
+    if (isFull || registrationDeadlinePassed) {
+      setEventActionError(
+        isFull ? "This event is already full." : "Registration deadline has passed.",
+      );
+      return;
+    }
+
+    const token = getAuthToken();
+    if (!token) {
+      setEventActionError("You need to sign in again to register for events.");
+      return;
+    }
+
+    setEventActionError(null);
+    setEventActionSuccess(null);
+    setPendingRegisterId(event.id);
+    try {
+      const response = await fetch(`${API_BASE_URL}/events/${event.id}/register`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        const message =
+          payload && typeof payload === "object" && "message" in payload
+            ? (payload as { message?: string }).message ??
+              "Unable to register for this event."
+            : "Unable to register for this event.";
+        throw new Error(message);
+      }
+
+      const registrationCount =
+        (payload as { registrationCount?: number })?.registrationCount ??
+        event.registrationCount + 1;
+
+      setEvents((prev) =>
+        prev.map((item) =>
+          item.id === event.id
+            ? {
+                ...item,
+                registrationCount,
+                isRegistered: true,
+              }
+            : item,
+        ),
+      );
+      setEventActionSuccess("You're registered for this event.");
+      await refreshEventsSilently();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Unable to register for this event.";
+      setEventActionError(message);
+    } finally {
+      setPendingRegisterId(null);
+    }
+  };
+
+  const handleUnregisterEvent = async (event: EventSummary) => {
+    const registrationDeadlinePassed =
+      new Date(event.registrationDeadline).getTime() <= Date.now();
+
+    if (registrationDeadlinePassed) {
+      setEventActionError("Registration deadline has passed.");
+      return;
+    }
+
+    const token = getAuthToken();
+    if (!token) {
+      setEventActionError("You need to sign in again to update registrations.");
+      return;
+    }
+
+    setEventActionError(null);
+    setEventActionSuccess(null);
+    setPendingUnregisterId(event.id);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/events/${event.id}/unregister`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        const message =
+          payload && typeof payload === "object" && "message" in payload
+            ? (payload as { message?: string }).message ??
+              "Unable to unregister from this event."
+            : "Unable to unregister from this event.";
+        throw new Error(message);
+      }
+
+      const registrationCount =
+        (payload as { registrationCount?: number })?.registrationCount ??
+        Math.max(event.registrationCount - 1, 0);
+
+      setEvents((prev) =>
+        prev.map((item) =>
+          item.id === event.id
+            ? {
+                ...item,
+                registrationCount,
+                isRegistered: false,
+              }
+            : item,
+        ),
+      );
+      setEventActionSuccess("You have been removed from this event.");
+      await refreshEventsSilently();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Unable to unregister from this event.";
+      setEventActionError(message);
+    } finally {
+      setPendingUnregisterId(null);
+    }
+  };
+
+  const handleDeleteEvent = async (event: EventSummary) => {
+    const confirmed = window.confirm(
+      `Delete "${event.name}"? This action cannot be undone.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    const token = getAuthToken();
+    if (!token) {
+      setEventActionError("You need to sign in again to delete this event.");
+      return;
+    }
+
+    setPendingDeleteId(event.id);
+    setEventActionError(null);
+    setEventActionSuccess(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/events/${event.id}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const message =
+          payload && typeof payload === "object" && "message" in payload
+            ? (payload as { message?: string }).message ??
+              "Unable to delete event."
+            : "Unable to delete event.";
+        throw new Error(message);
+      }
+
+      setEventActionSuccess("Event deleted.");
+      await refreshEventsSilently();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Unable to delete event.";
+      setEventActionError(message);
+    } finally {
+      setPendingDeleteId(null);
+    }
+  };
